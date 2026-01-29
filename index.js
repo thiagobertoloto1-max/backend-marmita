@@ -37,7 +37,7 @@ app.post("/create-payment", async (req, res) => {
         body: JSON.stringify({
           amount: amount,
           payment_method: "pix",
-          postback_url: "https://SEU_DOMINIO.com/webhook/anubispay",
+          postback_url: "https://backend-marmita.onrender.com/webhook/anubispay",
           customer: {
             name: nome,
             email: "cliente@teste.com",
