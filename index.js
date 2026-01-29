@@ -84,6 +84,8 @@ metadata: {
 
 /* Webhook */
 app.post("/webhook/anubispay", (req, res) => {
+  console.log("WEBHOOK RECEBIDO:", req.body);
+
   const { Id, Status } = req.body;
 
   if (Status === "PAID") {
@@ -91,10 +93,12 @@ app.post("/webhook/anubispay", (req, res) => {
       "UPDATE pedidos SET status = 'PAGO' WHERE transacao_id = ?",
       [Id]
     );
+    console.log("Pedido marcado como PAGO:", Id);
   }
 
   res.sendStatus(200);
 });
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
