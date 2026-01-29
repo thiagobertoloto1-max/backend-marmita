@@ -56,47 +56,108 @@ app.post("/create-payment", async (req, res) => {
             }
           ],
           pix: {
-  expires_in_days: 1
-},
-metadata: {
-  provider_name: "checkout-marmita"
-}
-
+            expires_in_days: 1
+          },
+          metadata: {
+            provider_name: "checkout-marmita"
+          }
         })
       }
     );
 
     const data = await response.json();
+    const transacaoId = data?.data?.id;
 
-    // Salva no banco
     db.run(
       "INSERT INTO pedidos (nome, telefone, valor, status, transacao_id) VALUES (?, ?, ?, ?, ?)",
-      [nome, telefone, valor, "AGUARDANDO", data.id]
+      [nome, telefone, valor, "AGUARDANDO", transacaoId],
+      function (err) {
+        if (err) {
+          console.error("Erro ao salvar pedido:", err);
+          return res.status(500).json({ erro: "Erro ao salvar pedido" });
+        }
+
+        return res.json({
+          pedido_id: this.lastID,
+          transacao_id: transacaoId,
+          pix: data?.data?.pix
+        });
+      }
     );
 
-    res.json(data);
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ erro: "Erro ao criar pagamento" });
+  } catch (error) {
+    console.error("Erro ao criar pagamento:", error);
+    return res.status(500).json({ erro: "Erro ao criar pagamento" });
   }
 });
+
+
 
 /* Webhook */
 app.post("/webhook/anubispay", (req, res) => {
   console.log("WEBHOOK RECEBIDO:", req.body);
 
-  const { Id, Status } = req.body;
+  const transacaoId = req.body.Id || req.body.id;
+  const status = req.body.Status || req.body.status;
 
-  if (Status === "PAID") {
+  if (status === "PAID" && transacaoId) {
     db.run(
       "UPDATE pedidos SET status = 'PAGO' WHERE transacao_id = ?",
-      [Id]
+      [transacaoId],
+      function (err) {
+        if (err) {
+          console.error("Erro ao atualizar pedido:", err);
+        } else {
+          console.log("Pedido marcado como PAGO:", transacaoId);
+        }
+      }
     );
-    console.log("Pedido marcado como PAGO:", Id);
   }
 
   res.sendStatus(200);
+});
+
+
+app.get("/pedido/:id", (req, res) => {
+  const { id } = req.params;
+
+  db.get(
+    "SELECT id, nome, telefone, valor, status, transacao_id FROM pedidos WHERE id = ?",
+    [id],
+    (err, row) => {
+      if (err) {
+        console.error("Erro ao buscar pedido:", err);
+        return res.status(500).json({ erro: "Erro ao buscar pedido" });
+      }
+
+      if (!row) {
+        return res.status(404).json({ erro: "Pedido não encontrado" });
+      }
+
+      return res.json(row);
+    }
+  );
+});
+
+app.get("/transacao/:id", (req, res) => {
+  const { id } = req.params;
+
+  db.get(
+    "SELECT id, nome, telefone, valor, status, transacao_id FROM pedidos WHERE transacao_id = ?",
+    [id],
+    (err, row) => {
+      if (err) {
+        console.error("Erro ao buscar transação:", err);
+        return res.status(500).json({ erro: "Erro ao buscar transação" });
+      }
+
+      if (!row) {
+        return res.status(404).json({ erro: "Transação não encontrada" });
+      }
+
+      return res.json(row);
+    }
+  );
 });
 
 
