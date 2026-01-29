@@ -7,6 +7,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const cors = require("cors");
+
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+app.options("*", cors());
+
 /* Criar pagamento PIX */
 app.post("/create-payment", async (req, res) => {
   const { nome, telefone, cpf, valor } = req.body;
