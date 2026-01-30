@@ -1,5 +1,3 @@
-// index.js (VERSÃO LIMPA E CORRETA PRA COPIAR/COLAR)
-
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -7,10 +5,10 @@ const db = require("./database");
 
 const app = express();
 
-// ✅ JSON do body
+// JSON do body
 app.use(express.json());
 
-// ✅ CORS (sem app.options e sem duplicar app.use(cors()))
+// CORS simples (sem OPTIONS wildcard)
 app.use(
   cors({
     origin: "*",
@@ -19,16 +17,67 @@ app.use(
   })
 );
 
-/* Criar pagamento PIX */
+/**
+ * CATÁLOGO FIXO (fonte de verdade do preço)
+ * - SKU é o identificador que o front envia
+ * - unit_price_cents é o preço em centavos
+ *
+ * Você pode alterar nomes/preços depois.
+ */
+const CATALOGO = {
+  marmita_frango: { title: "Marmita de Frango", unit_price_cents: 1990, tangible: true },
+  marmita_carne:  { title: "Marmita de Carne",  unit_price_cents: 2190, tangible: true },
+  marmita_fit:    { title: "Marmita Fit",       unit_price_cents: 2390, tangible: true },
+};
+
+// Util: valida telefone/CPF minimamente (MVP)
+function onlyDigits(s) {
+  return String(s || "").replace(/\D+/g, "");
+}
+
+/* Criar pagamento PIX (ANTI-FRAUDE: total calculado no backend) */
 app.post("/create-payment", async (req, res) => {
-  const { nome, telefone, cpf, valor } = req.body;
+  const { nome, telefone, cpf, items } = req.body;
 
   // Validação básica
-  if (!nome || !telefone || !cpf || !valor) {
-    return res.status(400).json({ erro: "Dados incompletos" });
+  if (!nome || !telefone || !cpf || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({
+      erro: "Dados incompletos. Envie: nome, telefone, cpf e items[]",
+    });
   }
 
-  const amount = Math.round(Number(valor) * 100); // centavos (inteiro)
+  const cpfDigits = onlyDigits(cpf);
+  const phone = String(telefone).trim();
+
+  if (cpfDigits.length !== 11) {
+    return res.status(400).json({ erro: "CPF inválido (precisa ter 11 dígitos)" });
+  }
+
+  // Calcula total e monta items para AnubisPay
+  let total_cents = 0;
+
+  // items do front: [{ sku, qty }]
+  for (const it of items) {
+    const sku = it?.sku;
+    const qty = Number(it?.qty);
+
+    if (!sku || !Number.isFinite(qty) || qty < 1) {
+      return res.status(400).json({ erro: "Item inválido. Use { sku, qty>=1 }" });
+    }
+
+    const produto = CATALOGO[sku];
+    if (!produto) {
+      return res.status(400).json({ erro: `SKU inválido: ${sku}` });
+    }
+
+    total_cents += produto.unit_price_cents * qty;
+  }
+
+  // Se quiser impor mínimo (muitos gateways têm mínimo)
+  // Exemplo: mínimo R$ 10,00:
+  // if (total_cents < 1000) return res.status(400).json({ erro: "Pedido mínimo: R$ 10,00" });
+
+  const amount = total_cents; // centavos (inteiro)
 
   // Basic Auth Base64: PUBLIC:SECRET
   const auth = Buffer.from(
@@ -51,21 +100,25 @@ app.post("/create-payment", async (req, res) => {
           postback_url: "https://backend-marmita.onrender.com/webhook/anubispay",
           customer: {
             name: nome,
-            email: "cliente@teste.com", // (MVP) depois você coloca um email real do cliente
-            phone: telefone,
+            email: "cliente@teste.com", // MVP
+            phone,
             document: {
               type: "cpf",
-              number: cpf,
+              number: cpfDigits,
             },
           },
-          items: [
-            {
-              title: "Marmita",
-              unit_price: amount,
-              quantity: 1,
-              tangible: true,
-            },
-          ],
+
+          // Items reais do pedido (preço vem do backend)
+          items: items.map((it) => {
+            const produto = CATALOGO[it.sku];
+            return {
+              title: produto.title,
+              unit_price: produto.unit_price_cents,
+              quantity: Number(it.qty),
+              tangible: produto.tangible,
+            };
+          }),
+
           pix: { expires_in_days: 1 },
           metadata: { provider_name: "checkout-marmita" },
         }),
@@ -74,22 +127,31 @@ app.post("/create-payment", async (req, res) => {
 
     const data = await response.json();
 
-console.log("STATUS ANUBIS:", response.status);
-console.log("RESPOSTA ANUBIS:", JSON.stringify(data, null, 2));
+    console.log("STATUS ANUBIS:", response.status);
+    console.log("RESPOSTA ANUBIS:", JSON.stringify(data, null, 2));
 
-const transacaoId = data?.data?.id;
+    const transacaoId = data?.data?.id;
 
-// Se a API respondeu erro de validação/autenticação, devolve a resposta pra você enxergar
-if (!response.ok || !transacaoId) {
-  return res.status(400).json({
-    erro: "Falha ao criar transação na AnubisPay",
-    detalhes: data
-  });
-}
+    // Se a API respondeu erro de validação/autenticação, devolve detalhes
+    if (!response.ok || !transacaoId) {
+      return res.status(400).json({
+        erro: "Falha ao criar transação na AnubisPay",
+        detalhes: data,
+      });
+    }
 
+    // Salva no SQLite (inclui items e total_cents)
     db.run(
-      "INSERT INTO pedidos (nome, telefone, valor, status, transacao_id) VALUES (?, ?, ?, ?, ?)",
-      [nome, telefone, Number(valor), "AGUARDANDO", transacaoId],
+      "INSERT INTO pedidos (nome, telefone, valor, status, transacao_id, items, total_cents) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        nome,
+        phone,
+        amount / 100, // valor em reais (só pra exibir)
+        "AGUARDANDO",
+        transacaoId,
+        JSON.stringify(items),
+        amount,
+      ],
       function (err) {
         if (err) {
           console.error("Erro ao salvar pedido:", err);
@@ -99,6 +161,8 @@ if (!response.ok || !transacaoId) {
         return res.json({
           pedido_id: this.lastID,
           transacao_id: transacaoId,
+          total_cents: amount,
+          total_reais: (amount / 100).toFixed(2),
           pix: data?.data?.pix,
         });
       }
@@ -109,7 +173,7 @@ if (!response.ok || !transacaoId) {
   }
 });
 
-/* Webhook (AnubisPay chama aqui quando muda status) */
+/* Webhook (AnubisPay chama quando muda status) */
 app.post("/webhook/anubispay", (req, res) => {
   console.log("WEBHOOK RECEBIDO:", req.body);
 
@@ -138,7 +202,7 @@ app.get("/pedido/:id", (req, res) => {
   const { id } = req.params;
 
   db.get(
-    "SELECT id, nome, telefone, valor, status, transacao_id FROM pedidos WHERE id = ?",
+    "SELECT id, nome, telefone, valor, status, transacao_id, items, total_cents FROM pedidos WHERE id = ?",
     [id],
     (err, row) => {
       if (err) {
@@ -158,7 +222,7 @@ app.get("/transacao/:id", (req, res) => {
   const { id } = req.params;
 
   db.get(
-    "SELECT id, nome, telefone, valor, status, transacao_id FROM pedidos WHERE transacao_id = ?",
+    "SELECT id, nome, telefone, valor, status, transacao_id, items, total_cents FROM pedidos WHERE transacao_id = ?",
     [id],
     (err, row) => {
       if (err) {
