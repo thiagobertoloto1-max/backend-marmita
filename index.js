@@ -15,7 +15,7 @@ app.use(cors({
   credentials: false
 }));
 
-app.options("*", cors());
+app.options("/*", cors());
 
 
 /* Criar pagamento PIX */
