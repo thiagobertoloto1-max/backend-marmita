@@ -73,15 +73,19 @@ app.post("/create-payment", async (req, res) => {
     );
 
     const data = await response.json();
-    const transacaoId = data?.data?.id;
 
-    // Se a API respondeu erro de validação/autenticação, devolve a resposta pra você enxergar
-    if (!response.ok || !transacaoId) {
-      return res.status(400).json({
-        erro: "Falha ao criar transação na AnubisPay",
-        detalhes: data,
-      });
-    }
+console.log("STATUS ANUBIS:", response.status);
+console.log("RESPOSTA ANUBIS:", JSON.stringify(data, null, 2));
+
+const transacaoId = data?.data?.id;
+
+// Se a API respondeu erro de validação/autenticação, devolve a resposta pra você enxergar
+if (!response.ok || !transacaoId) {
+  return res.status(400).json({
+    erro: "Falha ao criar transação na AnubisPay",
+    detalhes: data
+  });
+}
 
     db.run(
       "INSERT INTO pedidos (nome, telefone, valor, status, transacao_id) VALUES (?, ?, ?, ?, ?)",
