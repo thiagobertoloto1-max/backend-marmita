@@ -17,17 +17,75 @@ app.use(
   })
 );
 
-/**
- * CATÁLOGO FIXO (fonte de verdade do preço)
- * - SKU é o identificador que o front envia
- * - unit_price_cents é o preço em centavos
- *
- * Você pode alterar nomes/preços depois.
- */
+// Catálogo completo (SKU = "productId:sizeId")
 const CATALOGO = {
-  marmita_frango: { title: "Marmita de Frango", unit_price_cents: 1990, tangible: true },
-  marmita_carne:  { title: "Marmita de Carne",  unit_price_cents: 2190, tangible: true },
-  marmita_fit:    { title: "Marmita Fit",       unit_price_cents: 2390, tangible: true },
+  // PROMO / COMBOS
+  "promo_2_por_1:unico": { title: "2 por 1 🔥 (Combo 2 Marmitas M)", unit_price_cents: 2590, tangible: true },
+
+  // TRADICIONAIS
+  "almondegas_ao_molho:p": { title: "Almôndegas ao Molho (P)", unit_price_cents: 1990, tangible: true },
+  "almondegas_ao_molho:m": { title: "Almôndegas ao Molho (M)", unit_price_cents: 2490, tangible: true },
+  "almondegas_ao_molho:g": { title: "Almôndegas ao Molho (G)", unit_price_cents: 2990, tangible: true },
+
+  "bife_acebolado:p": { title: "Bife Acebolado (P)", unit_price_cents: 2090, tangible: true },
+  "bife_acebolado:m": { title: "Bife Acebolado (M)", unit_price_cents: 2590, tangible: true },
+  "bife_acebolado:g": { title: "Bife Acebolado (G)", unit_price_cents: 3090, tangible: true },
+
+  "carne_de_panela:p": { title: "Carne de Panela (P)", unit_price_cents: 2190, tangible: true },
+  "carne_de_panela:m": { title: "Carne de Panela (M)", unit_price_cents: 2690, tangible: true },
+  "carne_de_panela:g": { title: "Carne de Panela (G)", unit_price_cents: 3190, tangible: true },
+
+  "churrasco:p": { title: "Churrasco (P)", unit_price_cents: 2390, tangible: true },
+  "churrasco:m": { title: "Churrasco (M)", unit_price_cents: 2990, tangible: true },
+  "churrasco:g": { title: "Churrasco (G)", unit_price_cents: 3490, tangible: true },
+
+  "feijoada:p": { title: "Feijoada (P)", unit_price_cents: 2390, tangible: true },
+  "feijoada:m": { title: "Feijoada (M)", unit_price_cents: 2990, tangible: true },
+  "feijoada:g": { title: "Feijoada (G)", unit_price_cents: 3490, tangible: true },
+
+  "frango_parmegiana:p": { title: "Frango à Parmegiana (P)", unit_price_cents: 2190, tangible: true },
+  "frango_parmegiana:m": { title: "Frango à Parmegiana (M)", unit_price_cents: 2690, tangible: true },
+  "frango_parmegiana:g": { title: "Frango à Parmegiana (G)", unit_price_cents: 3190, tangible: true },
+
+  "frango_grelhado:p": { title: "Frango Grelhado (P)", unit_price_cents: 1790, tangible: true },
+  "frango_grelhado:m": { title: "Frango Grelhado (M)", unit_price_cents: 2290, tangible: true },
+  "frango_grelhado:g": { title: "Frango Grelhado (G)", unit_price_cents: 2790, tangible: true },
+
+  "tilapia:p": { title: "Tilápia (P)", unit_price_cents: 2390, tangible: true },
+  "tilapia:m": { title: "Tilápia (M)", unit_price_cents: 2890, tangible: true },
+  "tilapia:g": { title: "Tilápia (G)", unit_price_cents: 3390, tangible: true },
+
+  "estrogonofe_carne:p": { title: "Estrogonofe de Carne (P)", unit_price_cents: 2290, tangible: true },
+  "estrogonofe_carne:m": { title: "Estrogonofe de Carne (M)", unit_price_cents: 2790, tangible: true },
+  "estrogonofe_carne:g": { title: "Estrogonofe de Carne (G)", unit_price_cents: 3290, tangible: true },
+
+  "estrogonofe_frango:p": { title: "Estrogonofe de Frango (P)", unit_price_cents: 2090, tangible: true },
+  "estrogonofe_frango:m": { title: "Estrogonofe de Frango (M)", unit_price_cents: 2590, tangible: true },
+  "estrogonofe_frango:g": { title: "Estrogonofe de Frango (G)", unit_price_cents: 3090, tangible: true },
+
+  // ESPECIAIS
+  "lasanha_carne_frango:unico": { title: "Lasanha de Carne e Frango (Único)", unit_price_cents: 2490, tangible: true },
+
+  "macarrao_bolonhesa:p": { title: "Macarrão à Bolonhesa (P)", unit_price_cents: 1890, tangible: true },
+  "macarrao_bolonhesa:m": { title: "Macarrão à Bolonhesa (M)", unit_price_cents: 2390, tangible: true },
+  "macarrao_bolonhesa:g": { title: "Macarrão à Bolonhesa (G)", unit_price_cents: 2890, tangible: true },
+
+  // VEGANAS
+  "nuggets_veganos:p": { title: "Nuggets Veganos (P)", unit_price_cents: 2090, tangible: true },
+  "nuggets_veganos:m": { title: "Nuggets Veganos (M)", unit_price_cents: 2590, tangible: true },
+  "nuggets_veganos:g": { title: "Nuggets Veganos (G)", unit_price_cents: 3090, tangible: true },
+
+  "moqueca_palmito:p": { title: "Moqueca de Palmito Pupunha (P)", unit_price_cents: 2290, tangible: true },
+  "moqueca_palmito:m": { title: "Moqueca de Palmito Pupunha (M)", unit_price_cents: 2790, tangible: true },
+  "moqueca_palmito:g": { title: "Moqueca de Palmito Pupunha (G)", unit_price_cents: 3290, tangible: true },
+
+  "estrogonofe_vegano:p": { title: "Estrogonofe Vegano (P)", unit_price_cents: 2190, tangible: true },
+  "estrogonofe_vegano:m": { title: "Estrogonofe Vegano (M)", unit_price_cents: 2690, tangible: true },
+  "estrogonofe_vegano:g": { title: "Estrogonofe Vegano (G)", unit_price_cents: 3190, tangible: true },
+
+  "quibe_vegano:p": { title: "Quibe Vegano (P)", unit_price_cents: 1990, tangible: true },
+  "quibe_vegano:m": { title: "Quibe Vegano (M)", unit_price_cents: 2490, tangible: true },
+  "quibe_vegano:g": { title: "Quibe Vegano (G)", unit_price_cents: 2990, tangible: true },
 };
 
 // Util: valida telefone/CPF minimamente (MVP)
