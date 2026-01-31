@@ -255,6 +255,51 @@ app.post("/webhook/anubispay", (req, res) => {
   return res.sendStatus(200);
 });
 
+// ✅ SALVAR META DO PEDIDO (endereço, itens, etc)
+app.post("/pedido/:id/meta", (req, res) => {
+  const pedidoId = req.params.id;
+  const meta = req.body;
+
+  db.run(
+    "UPDATE pedidos SET items = ? WHERE id = ?",
+    [JSON.stringify(meta), pedidoId],
+    function (err) {
+      if (err) {
+        console.error("Erro ao salvar meta do pedido:", err);
+        return res.status(500).json({ erro: "Erro ao salvar meta do pedido" });
+      }
+
+      return res.json({ ok: true });
+    }
+  );
+});
+
+// ✅ LER META DO PEDIDO
+app.get("/pedido/:id/meta", (req, res) => {
+  const pedidoId = req.params.id;
+
+  db.get(
+    "SELECT items FROM pedidos WHERE id = ?",
+    [pedidoId],
+    (err, row) => {
+      if (err) {
+        console.error("Erro ao buscar meta do pedido:", err);
+        return res.status(500).json({ erro: "Erro ao buscar meta do pedido" });
+      }
+
+      if (!row || !row.items) {
+        return res.status(404).json({ erro: "Meta do pedido não encontrada" });
+      }
+
+      try {
+        return res.json(JSON.parse(row.items));
+      } catch (e) {
+        return res.status(500).json({ erro: "Meta corrompida" });
+      }
+    }
+  );
+});
+
 /* Buscar pedido por ID do SQLite */
 app.get("/pedido/:id", (req, res) => {
   const { id } = req.params;
