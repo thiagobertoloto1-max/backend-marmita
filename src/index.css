@@ -1,0 +1,317 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design System - Brazilian Marmita Delivery App */
+
+@layer base {
+  :root {
+    /* Main brand colors - warm and appetizing */
+    --background: 30 30% 98%;
+    --foreground: 20 15% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 20 15% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 15% 15%;
+
+    /* Primary - Vibrant Orange (appetite-inducing) */
+    --primary: 24 95% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary - Deep Forest Green (Brazilian) */
+    --secondary: 145 45% 25%;
+    --secondary-foreground: 0 0% 100%;
+
+    /* Muted tones */
+    --muted: 30 20% 94%;
+    --muted-foreground: 20 10% 45%;
+
+    /* Accent - Golden Yellow */
+    --accent: 45 100% 51%;
+    --accent-foreground: 20 15% 15%;
+
+    /* Status colors */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 145 60% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 20 15% 15%;
+
+    /* UI elements */
+    --border: 30 15% 88%;
+    --input: 30 15% 88%;
+    --ring: 24 95% 53%;
+
+    --radius: 0.75rem;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(20 15% 15% / 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(20 15% 15% / 0.1), 0 2px 4px -2px hsl(20 15% 15% / 0.1);
+    --shadow-lg: 0 10px 15px -3px hsl(20 15% 15% / 0.1), 0 4px 6px -4px hsl(20 15% 15% / 0.1);
+    --shadow-xl: 0 20px 25px -5px hsl(20 15% 15% / 0.1), 0 8px 10px -6px hsl(20 15% 15% / 0.1);
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(24 95% 53%) 0%, hsl(16 90% 48%) 100%);
+    --gradient-hero: linear-gradient(180deg, hsl(24 95% 53% / 0.1) 0%, transparent 100%);
+    --gradient-card: linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(30 30% 98%) 100%);
+
+    /* Sidebar */
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 20 15% 10%;
+    --foreground: 30 20% 95%;
+
+    --card: 20 15% 13%;
+    --card-foreground: 30 20% 95%;
+
+    --popover: 20 15% 13%;
+    --popover-foreground: 30 20% 95%;
+
+    --primary: 24 95% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 145 40% 30%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 20 15% 18%;
+    --muted-foreground: 30 15% 60%;
+
+    --accent: 45 100% 51%;
+    --accent-foreground: 20 15% 10%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 145 50% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --border: 20 15% 20%;
+    --input: 20 15% 20%;
+    --ring: 24 95% 55%;
+
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Poppins', 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  /* Product Card Styles */
+  .product-card {
+    @apply bg-card rounded-xl overflow-hidden transition-all duration-300;
+    box-shadow: var(--shadow-md);
+  }
+
+  .product-card:hover {
+    box-shadow: var(--shadow-xl);
+    transform: translateY(-2px);
+  }
+
+  .product-card:active {
+    transform: translateY(0);
+  }
+
+  /* Category Pill */
+  .category-pill {
+    @apply px-4 py-2 rounded-full bg-muted text-muted-foreground font-medium text-sm transition-all duration-200;
+  }
+
+  .category-pill:hover, .category-pill.active {
+    @apply bg-primary text-primary-foreground;
+  }
+
+  /* Bottom Navigation */
+  .bottom-nav {
+    @apply fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50;
+    box-shadow: 0 -4px 12px hsl(20 15% 15% / 0.08);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .bottom-nav-item {
+    @apply flex flex-col items-center justify-center py-2 px-3 text-muted-foreground transition-colors duration-200;
+  }
+
+  .bottom-nav-item.active {
+    @apply text-primary;
+  }
+
+  /* Badge for cart count */
+  .cart-badge {
+    @apply absolute -top-1 -right-1 w-5 h-5 bg-primary text-primary-foreground text-xs font-bold rounded-full flex items-center justify-center;
+    animation: bounce-in 0.3s ease-out;
+  }
+
+  /* Price tag */
+  .price-tag {
+    @apply text-primary font-bold;
+  }
+
+  .price-original {
+    @apply text-muted-foreground line-through text-sm;
+  }
+
+  /* Tag chips */
+  .tag-chip {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-secondary/10 text-secondary;
+  }
+
+  /* Rating stars */
+  .rating-star {
+    @apply text-accent;
+  }
+
+  /* Stepper */
+  .stepper-item {
+    @apply flex items-center gap-2;
+  }
+
+  .stepper-circle {
+    @apply w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-300;
+  }
+
+  .stepper-circle.active {
+    @apply bg-primary text-primary-foreground;
+  }
+
+  .stepper-circle.completed {
+    @apply bg-success text-success-foreground;
+  }
+
+  .stepper-circle.pending {
+    @apply bg-muted text-muted-foreground;
+  }
+
+  /* Banner carousel */
+  .banner-slide {
+    @apply relative rounded-xl overflow-hidden;
+    aspect-ratio: 16/7;
+  }
+
+  /* Quantity selector */
+  .qty-button {
+    @apply w-8 h-8 rounded-full bg-muted flex items-center justify-center text-foreground font-bold transition-all duration-200;
+  }
+
+  .qty-button:hover {
+    @apply bg-primary text-primary-foreground;
+  }
+
+  .qty-button:active {
+    transform: scale(0.95);
+  }
+
+  /* Search bar */
+  .search-bar {
+    @apply flex items-center gap-2 bg-muted rounded-full px-4 py-2.5 transition-all duration-200;
+  }
+
+  .search-bar:focus-within {
+    @apply ring-2 ring-primary/30 bg-card;
+  }
+
+  /* Slide-over panel */
+  .slide-panel {
+    @apply fixed inset-y-0 right-0 w-full max-w-md bg-card z-50 transform transition-transform duration-300;
+    box-shadow: -4px 0 20px hsl(20 15% 15% / 0.15);
+  }
+}
+
+@layer utilities {
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Safe area padding */
+  .safe-bottom {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 5rem);
+  }
+
+  /* Gradient text */
+  .text-gradient {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Touch feedback */
+  .touch-feedback {
+    @apply active:scale-[0.98] transition-transform duration-100;
+  }
+}
+
+/* Animations */
+@keyframes bounce-in {
+  0% { transform: scale(0); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+@keyframes slide-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s infinite;
+}
