@@ -261,7 +261,7 @@ app.post("/pedido/:id/meta", (req, res) => {
   const meta = req.body;
 
   db.run(
-    "UPDATE pedidos SET items = ? WHERE id = ?",
+    "UPDATE pedidos SET meta_json = ? WHERE id = ?",
     [JSON.stringify(meta), pedidoId],
     function (err) {
       if (err) {
@@ -279,7 +279,7 @@ app.get("/pedido/:id/meta", (req, res) => {
   const pedidoId = req.params.id;
 
   db.get(
-    "SELECT items FROM pedidos WHERE id = ?",
+    "SELECT meta_json FROM pedidos WHERE id = ?",
     [pedidoId],
     (err, row) => {
       if (err) {
@@ -287,12 +287,12 @@ app.get("/pedido/:id/meta", (req, res) => {
         return res.status(500).json({ erro: "Erro ao buscar meta do pedido" });
       }
 
-      if (!row || !row.items) {
+      if (!row || !row.meta_json) {
         return res.status(404).json({ erro: "Meta do pedido não encontrada" });
       }
 
       try {
-        return res.json(JSON.parse(row.items));
+        return res.json(JSON.parse(row.meta_json));
       } catch (e) {
         return res.status(500).json({ erro: "Meta corrompida" });
       }
