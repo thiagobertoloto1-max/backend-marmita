@@ -86,6 +86,22 @@ const CATALOGO = {
   "quibe_vegano:p": { title: "Quibe Vegano (P)", unit_price_cents: 1990, tangible: true },
   "quibe_vegano:m": { title: "Quibe Vegano (M)", unit_price_cents: 2490, tangible: true },
   "quibe_vegano:g": { title: "Quibe Vegano (G)", unit_price_cents: 2990, tangible: true },
+
+// BEBIDAS — LATA 350ml
+"refri_lata:coca":        { title: "Coca-Cola Lata 350ml", unit_price_cents: 450, tangible: true },
+"refri_lata:coca_zero":   { title: "Coca-Cola Zero Lata 350ml", unit_price_cents: 450, tangible: true },
+"refri_lata:fanta_uva":   { title: "Fanta Uva Lata 350ml", unit_price_cents: 400, tangible: true },
+"refri_lata:fanta_laranja": { title: "Fanta Laranja Lata 350ml", unit_price_cents: 400, tangible: true },
+"refri_lata:sprite":      { title: "Sprite Lata 350ml", unit_price_cents: 450, tangible: true },
+
+// BEBIDAS — MAIOR (1L / 2L)
+"refri_maior:coca_1l":    { title: "Coca-Cola 1L", unit_price_cents: 790, tangible: true },
+"refri_maior:guarana_1l": { title: "Guaraná Antarctica 1L", unit_price_cents: 690, tangible: true },
+"refri_maior:fanta_1l":   { title: "Fanta Laranja 1L", unit_price_cents: 690, tangible: true },
+
+"refri_maior:coca_2l":    { title: "Coca-Cola 2L", unit_price_cents: 1290, tangible: true },
+"refri_maior:guarana_2l": { title: "Guaraná Antarctica 2L", unit_price_cents: 990, tangible: true },
+"refri_maior:fanta_2l":   { title: "Fanta Laranja 2L", unit_price_cents: 1090, tangible: true },
 };
 
 // Util: valida telefone/CPF minimamente (MVP)
@@ -155,7 +171,7 @@ app.post("/create-payment", async (req, res) => {
         body: JSON.stringify({
           amount,
           payment_method: "pix",
-          postback_url: "https://backend-marmita.onrender.com/webhook/anubispay",
+          postback_url: `${process.env.PUBLIC_BASE_URL}/webhook/anubispay`,
           customer: {
             name: nome,
             email: "cliente@teste.com", // MVP
@@ -183,7 +199,29 @@ app.post("/create-payment", async (req, res) => {
       }
     );
 
-    const data = await response.json();
+    // ✅ Lê como texto primeiro (evita crash se vier vazio ou não-JSON)
+const rawText = await response.text();
+
+let data = null;
+try {
+  data = rawText ? JSON.parse(rawText) : null;
+} catch (e) {
+  data = null;
+}
+
+console.log("STATUS ANUBIS:", response.status);
+console.log("ANUBIS content-type:", response.headers.get("content-type"));
+console.log("ANUBIS raw body:", rawText);
+
+// ✅ Se não for OK, devolve erro com detalhes (não dá 500 sem explicação)
+if (!response.ok) {
+  return res.status(400).json({
+    erro: "Falha ao criar transação na AnubisPay",
+    status: response.status,
+    raw: rawText,
+    data,
+  });
+}
 
     console.log("STATUS ANUBIS:", response.status);
     console.log("RESPOSTA ANUBIS:", JSON.stringify(data, null, 2));
