@@ -8,14 +8,31 @@ const app = express();
 // JSON do body
 app.use(express.json());
 
-// CORS simples (sem OPTIONS wildcard)
+// CORS (permite seu domínio chamar o backend)
+const ALLOWED_ORIGINS = [
+  "https://www.divinosabor.shop",
+  "https://divinosabor.shop",
+  "http://localhost:5173",
+  "http://localhost:8080",
+];
+
 app.use(
   cors({
-    origin: "*",
-    methods: ["GET", "POST"],
+    origin: function (origin, callback) {
+      // permite requests sem origin (ex: curl, postman)
+      if (!origin) return callback(null, true);
+
+      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+
+      return callback(new Error("Not allowed by CORS: " + origin));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+// responder preflight (OPTIONS) pra tudo
+app.options("*", cors());
 
 // Catálogo completo (SKU = "productId:sizeId")
 const CATALOGO = {
