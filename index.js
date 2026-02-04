@@ -378,7 +378,55 @@ app.get("/transacao/:id", (req, res) => {
   );
 });
 
-const PORT = process.env.PORT || 3000;
+app.post("/ajuda", async (req, res) => {
+  try {
+    const { pergunta } = req.body;
+
+    if (!pergunta) {
+      return res.status(400).json({ error: "Pergunta não informada" });
+    }
+
+    const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "mistral-small-latest",
+        messages: [
+          {
+            role: "system",
+            content: `
+Você é um atendente virtual da marmitaria Divino Sabor.
+Responda de forma curta, educada e simples.
+Se não souber algo, diga para o cliente entrar em contato.
+`
+          },
+          {
+            role: "user",
+            content: pergunta
+          }
+        ],
+      }),
+    });
+
+    const data = await response.json();
+
+    const resposta =
+      data?.choices?.[0]?.message?.content ||
+      "Desculpe, não consegui responder agora.";
+
+    return res.json({ resposta });
+  } catch (err) {
+    console.error("Erro no bot de ajuda:", err);
+    return res.status(500).json({
+      error: "Erro ao processar a pergunta",
+    });
+  }
+});
+
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log("Servidor rodando na porta " + PORT);
 });
