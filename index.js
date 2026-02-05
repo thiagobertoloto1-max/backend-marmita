@@ -502,6 +502,8 @@ app.post("/webhook/axenpay", (req, res) => {
     console.log("WEBHOOK RECEBIDO:", req.body);
 
     const body = req.body || {};
+    
+    // 1. Identifica o ID da transação
     const transacaoId =
       body.id ||
       body.Id ||
@@ -510,12 +512,20 @@ app.post("/webhook/axenpay", (req, res) => {
       body.txid ||
       body?.data?.id ||
       body?.data?.transaction_id;
+
+    // 2. Identifica o Status
     const rawStatus =
       body.status || body.Status || body?.data?.status || body?.event?.status;
     const status = String(rawStatus || "").toUpperCase();
 
+    // 3. Identifica o Valor (Novo!)
+    // Tenta pegar de Amount (geralmente float) ou amount/data.amount (geralmente centavos)
+    const rawAmount = body.Amount || body.amount || body?.data?.amount || 0;
+    const valor = Number(rawAmount);
+
     const paidStatuses = new Set(["PAID", "COMPLETED", "CONFIRMED", "SUCCESS"]);
 
+    // Se estiver pago e tiver ID...
     if (paidStatuses.has(status) && transacaoId) {
       db.run(
         "UPDATE pedidos SET status = 'PAGO' WHERE transacao_id = ?",
@@ -525,6 +535,10 @@ app.post("/webhook/axenpay", (req, res) => {
             console.error("WEBHOOK ERROR:", err);
           } else {
             console.log("Pedido marcado como PAGO:", transacaoId);
+            
+            // --- AQUI O ROBÔ ENTRA EM AÇÃO 🤖 ---
+            // Chama a função que está lá no final do arquivo
+            enviarNotificacaoTelegram(valor, status, transacaoId);
           }
         }
       );
@@ -680,3 +694,28 @@ const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log("Servidor rodando na porta " + PORT);
 });
+
+// Função para enviar notificação no Telegram
+async function enviarNotificacaoTelegram(valor, status) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  
+  if (!token || !chatId) return; // Se não tiver configurado, ignora
+
+  const mensagem = `
+💰 *NOVA VENDA NO DIVINO SABOR!* 💵 Valor: R$ ${(valor).toFixed(2)}
+✅ Status: ${status}
+🎉 Bora preparar a marmita!
+  `;
+
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: mensagem, parse_mode: 'Markdown' })
+    });
+    console.log('Mensagem enviada pro Telegram!');
+  } catch (erro) {
+    console.error('Erro ao enviar Telegram:', erro);
+  }
+}
