@@ -496,52 +496,42 @@ app.post("/create-payment", async (req, res) => {
   }
 });
 
-/* Webhook (AxenPay chama quando muda status) */
+// --- SUBSTITUA O APP.POST INTEIRO POR ESTE ---
 app.post("/webhook/axenpay", (req, res) => {
   try {
     console.log("WEBHOOK RECEBIDO:", req.body);
 
     const body = req.body || {};
     
-    // 1. Identifica o ID da transação
+    // 1. Identifica o ID
     const transacaoId =
-      body.id ||
-      body.Id ||
-      body.transaction_id ||
-      body.transactionId ||
-      body.txid ||
-      body?.data?.id ||
-      body?.data?.transaction_id;
+      body.id || body.Id || body.transaction_id || body.transactionId || body.txid || body?.data?.id;
 
     // 2. Identifica o Status
-    const rawStatus =
-      body.status || body.Status || body?.data?.status || body?.event?.status;
+    const rawStatus = body.status || body.Status || body?.data?.status;
     const status = String(rawStatus || "").toUpperCase();
 
-    // 3. Identifica o Valor (Novo!)
-    // Tenta pegar de Amount (geralmente float) ou amount/data.amount (geralmente centavos)
+    // 3. Identifica o Valor
     const rawAmount = body.Amount || body.amount || body?.data?.amount || 0;
     const valor = Number(rawAmount);
 
     const paidStatuses = new Set(["PAID", "COMPLETED", "CONFIRMED", "SUCCESS"]);
-
-    // Se estiver pago e tiver ID...
+    
+    // LOGICA 1: Atualizar Banco de Dados (SÓ SE PAGOU)
     if (paidStatuses.has(status) && transacaoId) {
       db.run(
         "UPDATE pedidos SET status = 'PAGO' WHERE transacao_id = ?",
         [transacaoId],
-        function (err) {
-          if (err) {
-            console.error("WEBHOOK ERROR:", err);
-          } else {
-            console.log("Pedido marcado como PAGO:", transacaoId);
-            
-            // --- AQUI O ROBÔ ENTRA EM AÇÃO 🤖 ---
-            // Chama a função que está lá no final do arquivo
-            enviarNotificacaoTelegram(valor, status, transacaoId);
-          }
+        (err) => {
+           if (!err) console.log("DB Atualizado para PAGO:", transacaoId);
         }
       );
+    }
+
+    // LOGICA 2: Avisar no Telegram (SE PAGOU OU SE GEROU)
+    // Se for PAGO ou PENDENTE, manda mensagem
+    if ((paidStatuses.has(status) || status === 'PENDING') && transacaoId) {
+        enviarNotificacaoTelegram(valor, status, transacaoId);
     }
 
     return res.sendStatus(200);
@@ -695,17 +685,35 @@ app.listen(PORT, () => {
   console.log("Servidor rodando na porta " + PORT);
 });
 
-// Função para enviar notificação no Telegram
-async function enviarNotificacaoTelegram(valor, status) {
+// --- SUBSTITUA A FUNÇÃO ANTIGA POR ESTA NOVA ---
+async function enviarNotificacaoTelegram(valor, status, transacaoId) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
-  
-  if (!token || !chatId) return; // Se não tiver configurado, ignora
+
+  if (!token || !chatId) return;
+
+  let valorFinal = valor;
+  if (valor > 0 && Number.isInteger(valor)) {
+      valorFinal = valor / 100;
+  }
+
+  // Define o título e a cor do emoji baseados no status
+  let titulo = "⚠️ ATUALIZAÇÃO DE STATUS";
+  let emoji = "🔔";
+
+  if (status === 'PENDING' || status === 'CRIADO') {
+      titulo = "🆕 PIX GERADO (AGUARDANDO)";
+      emoji = "⏳";
+  } else if (status === 'PAID' || status === 'APPROVED' || status === 'COMPLETED') {
+      titulo = "✅ PAGAMENTO CONFIRMADO!";
+      emoji = "💰";
+  }
 
   const mensagem = `
-💰 *NOVA VENDA NO DIVINO SABOR!* 💵 Valor: R$ ${(valor).toFixed(2)}
-✅ Status: ${status}
-🎉 Bora preparar a marmita!
+${emoji} *${titulo}*
+💵 Valor: R$ ${Number(valorFinal).toFixed(2)}
+🆔 ID: ${transacaoId}
+ℹ️ Status: ${status}
   `;
 
   try {
@@ -714,8 +722,8 @@ async function enviarNotificacaoTelegram(valor, status) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text: mensagem, parse_mode: 'Markdown' })
     });
-    console.log('Mensagem enviada pro Telegram!');
+    console.log(`🔔 Notificação (${status}) enviada pro Telegram!`);
   } catch (erro) {
-    console.error('Erro ao enviar Telegram:', erro);
+    console.error('Erro Telegram:', erro);
   }
 }
