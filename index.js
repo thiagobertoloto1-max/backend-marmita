@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
+const crypto = require("crypto");
 const db = require("./database");
 
 const app = express();
@@ -16,13 +17,19 @@ const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://localhost:8080",
   "http://localhost:8081",
+  "http://localhost:8081",
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
     // permite requests sem origin (ex: curl, postman)
     if (!origin) return callback(null, true);
+const corsOptions = {
+  origin: function (origin, callback) {
+    // permite requests sem origin (ex: curl, postman)
+    if (!origin) return callback(null, true);
 
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
 
     return callback(new Error("Not allowed by CORS: " + origin));
@@ -30,6 +37,18 @@ const corsOptions = {
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
+    return callback(new Error("Not allowed by CORS: " + origin));
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors());
+
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
 
 app.use(cors(corsOptions));
 app.options(/.*/, cors());
@@ -295,6 +314,329 @@ app.get('/ping', (req, res) => {
 });
 
 
+function buildOrderFromItems(items) {
+  let total_cents = 0;
+  const payloadItems = [];
+
+  for (const it of items) {
+    const sku = it?.sku;
+    const qty = Number(it?.qty);
+
+    if (!sku || !Number.isFinite(qty) || qty < 1) {
+      const err = new Error("Item inválido. Use { sku, qty>=1 }");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const produto = CATALOGO[sku];
+    if (!produto) {
+      const err = new Error(`SKU inválido: ${sku}`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    total_cents += produto.unit_price_cents * qty;
+    payloadItems.push({
+      title: produto.title,
+      unit_price: produto.unit_price_cents,
+      quantity: qty,
+      tangible: produto.tangible,
+    });
+  }
+
+  return { total_cents, payloadItems };
+}
+
+let AXENPAY_TOKEN_CACHE = {
+  token: null,
+  expiresAt: 0,
+};
+
+async function getAxenpayToken() {
+  const base = process.env.AXENPAY_BASE_URL;
+  const clientId = process.env.AXENPAY_CLIENT_ID;
+  const clientSecret = process.env.AXENPAY_CLIENT_SECRET;
+
+  if (!base || !clientId || !clientSecret) {
+    const err = new Error("AxenPay: BASE_URL / CLIENT_ID / CLIENT_SECRET não configurados");
+    err.statusCode = 500;
+    throw err;
+  }
+
+  const now = Date.now();
+  if (AXENPAY_TOKEN_CACHE.token && AXENPAY_TOKEN_CACHE.expiresAt > now + 30_000) {
+    return AXENPAY_TOKEN_CACHE.token;
+  }
+
+  const resp = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      client_id: clientId,
+      client_secret: clientSecret,
+    }),
+  });
+
+  const raw = await resp.text();
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+
+  if (!resp.ok) {
+    const err = new Error(`AxenPay login falhou (${resp.status})`);
+    err.statusCode = resp.status;
+    err.rawBody = raw;
+    throw err;
+  }
+
+  const token = data?.token;
+  if (!token) {
+    const err = new Error("AxenPay login: campo 'token' não veio na resposta");
+    err.statusCode = 502;
+    err.rawBody = raw;
+    throw err;
+  }
+
+  // Cache simples (55 min). Ajuste depois se quiser usar exp do JWT.
+  AXENPAY_TOKEN_CACHE.token = token;
+  AXENPAY_TOKEN_CACHE.expiresAt = Date.now() + 55 * 60 * 1000;
+
+  return token;
+}
+
+async function createPixPayment(items, customer) {
+  // DEBUG flag to toggle between safe test payload and production payload
+  const DEBUG_AXENPAY = false;
+  
+  const bearerToken = await getAxenpayToken();
+  const AXENPAY_BASE_URL = process.env.AXENPAY_BASE_URL;
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL;
+  if (!AXENPAY_BASE_URL) {
+    const err = new Error("AxenPay base URL not configured");
+    err.statusCode = 500;
+    throw err;
+  }
+  if (!publicBaseUrl) {
+    const err = new Error("Public base URL not configured");
+    err.statusCode = 500;
+    throw err;
+  }
+
+  const { total_cents, payloadItems } = buildOrderFromItems(items);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const url = `${AXENPAY_BASE_URL}/api/payments/deposit`;
+    const externalId = crypto.randomUUID
+      ? `pedido_${crypto.randomUUID()}`
+      : `pedido_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+      
+    const cpfDigits = String(customer.cpfDigits || customer.cpf || "")
+      .replace(/\D/g, "");
+
+    const payerEmail = customer.email || "sem_email@divinosabor.shop";
+
+    // URL PÚBLICA SEGURA (Evita erro 500 na AxenPay)
+    let callbackUrl = `${publicBaseUrl}/webhook/axenpay`;
+    
+    if (callbackUrl.includes("localhost") || callbackUrl.includes("127.0.0.1")) {
+      console.warn("⚠️ AVISO: URL de Callback é Localhost. Substituindo por URL segura para evitar erro 500.");
+      callbackUrl = "https://divinosabor.shop/webhook/axenpay"; 
+    }
+      
+    const payload = DEBUG_AXENPAY
+      ? {
+          amount: 5.0,
+          external_id: "teste_postman_001",
+          clientCallbackUrl: "https://google.com",
+          payer: {
+            name: "Teste De Pagamento",
+            email: "teste@exemplo.com.br",
+            document: "48714499800",
+          },
+        }
+      : {
+          amount: Number((total_cents / 100).toFixed(2)),
+          external_id: externalId,
+          clientCallbackUrl: callbackUrl,
+          payer: {
+            name: customer.nome,
+            email: payerEmail, 
+            document: cpfDigits,
+          },
+        };
+
+    console.log("=================================");
+    console.log("AXENPAY DEPOSIT URL:", url);
+    console.log("AXENPAY DEPOSIT PAYLOAD:");
+    console.log(JSON.stringify(payload, null, 2));
+    console.log("=================================");
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${bearerToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const rawText = await response.text();
+    
+    if (!response.ok) {
+      console.error("=================================");
+      console.error("AXENPAY STATUS:", response.status);
+      console.error("AXENPAY RESPONSE BODY:", rawText);
+      console.error("=================================");
+
+      const err = new Error("Erro ao criar pagamento AxenPay");
+      err.statusCode = response.status;
+      err.rawBody = rawText;
+      err.alreadyLogged = true;
+      throw err;
+    }
+
+    let data = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch (e) {
+      data = null;
+    }
+
+    console.log("AXENPAY BODY (PARSED):", JSON.stringify(data, null, 2));
+
+    // ✅ CORREÇÃO AQUI: LER O FORMATO REAL RETORNADO PELA AXENPAY
+    // O payload de sucesso vem dentro de "qrCodeResponse"
+    const qrResponse = data?.qrCodeResponse || {};
+
+    const transactionId =
+      qrResponse.transactionId || 
+      data?.data?.id || 
+      data?.id || 
+      data?.transaction_id || 
+      data?.payment_id;
+
+    // A string "000201..." é o BR Code (Copia e Cola). 
+    // A AxenPay está enviando isso no campo "qrcode".
+    const rawQrString = qrResponse.qrcode || "";
+
+    const copyPasteCode =
+      rawQrString || 
+      data?.data?.pix?.copy_paste_code ||
+      data?.pix?.copyPasteCode ||
+      data?.emv ||
+      data?.br_code;
+
+    // Como não veio imagem Base64, usamos a string Copia e Cola como "qr_code" também.
+    // O frontend (se usar biblioteca de QR) vai gerar a imagem a partir desse texto.
+    const qrCode =
+      rawQrString || 
+      data?.data?.pix?.qr_code ||
+      data?.qr_code_base64;
+
+    const finalQrCode = qrCode || copyPasteCode;
+
+    if (!transactionId || !finalQrCode || !copyPasteCode) {
+      const err = new Error("AXENPAY ERROR: Resposta incompleta (campos não encontrados)");
+      err.statusCode = 502;
+      err.rawBody = rawText;
+      throw err;
+    }
+
+    return {
+      ok: true,
+      data: {
+        qr_code: finalQrCode,
+        copy_paste_code: copyPasteCode,
+        transaction_id: transactionId,
+        status: qrResponse.status || data?.data?.status || "PENDING",
+      },
+    };
+  } catch (error) {
+    const status = error?.statusCode || 500;
+    const body = error?.rawBody || error?.message || "UNKNOWN_ERROR";
+    if (!error?.alreadyLogged) {
+      console.error("AXENPAY STATUS:", status);
+      console.error("AXENPAY BODY:", body);
+    }
+    return {
+      ok: false,
+      error: {
+        message: error?.message || "AXENPAY ERROR",
+        status,
+      },
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/* Criar pagamento PIX (DEBUG REFORÇADO) */
+app.post("/create-payment", async (req, res) => {
+  console.log("\n=== 🟢 INÍCIO REQUEST /create-payment ===");
+  
+  console.log("HEADERS (Content-Type):", req.headers["content-type"]);
+  console.log("BODY RECEBIDO:", JSON.stringify(req.body, null, 2));
+
+  const { nome, telefone, cpf, items, email } = req.body;
+
+  // Validação Granular
+  const erros = [];
+  if (!nome) erros.push("nome ausente/vazio");
+  if (!telefone) erros.push("telefone ausente/vazio");
+  if (!cpf) erros.push("cpf ausente/vazio");
+  if (!Array.isArray(items)) erros.push("items não é array");
+  else if (items.length === 0) erros.push("items está vazio");
+
+  if (erros.length > 0) {
+    console.error("❌ REJEITADO PELO BACKEND:", erros.join(", "));
+    return res.status(400).json({
+      erro: "Dados incompletos ou inválidos.",
+      detalhes: erros 
+    });
+  }
+
+  // Sanitização
+  const nomeLimpo = String(nome).trim();
+  const cpfDigits = onlyDigits(cpf);
+  const phoneDigits = String(telefone || "").replace(/\D/g, "");
+
+  // Se vier com 55 na frente (tipo 551299...), remove para padronizar
+  const normalizedPhone =
+    phoneDigits.length === 13 && phoneDigits.startsWith("55")
+      ? phoneDigits.slice(2)
+      : phoneDigits;
+
+  console.log(`DADOS PROCESSADOS -> CPF: ${cpfDigits}, Tel: ${normalizedPhone}, Itens: ${items.length}, Email: ${email}`);
+
+  if (nomeLimpo.length < 2) return res.status(400).json({ erro: "Nome inválido (muito curto)" });
+  if (cpfDigits.length !== 11) return res.status(400).json({ erro: "CPF inválido (precisa ter 11 dígitos)" });
+  
+  if (phoneDigits.length < 10 || phoneDigits.length > 11) {
+    console.warn("⚠️ ALERTA: Telefone com tamanho incomum:", phoneDigits);
+  }
+
+  try {
+    const order = buildOrderFromItems(items);
+    
+    const pixPayment = await createPixPayment(items, {
+      nome: nomeLimpo,
+      phone: phoneDigits,
+      cpfDigits,
+      email: email, 
+    });
+
+    if (!pixPayment.ok) {
+      console.error("❌ ERRO NA FUNÇÃO createPixPayment:", pixPayment.error);
+      const msg = pixPayment.error.message || "Erro ao criar pagamento";
+      return res.status(500).json({ erro: msg });
+    }
+
+    console.log("✅ SUCESSO AXENPAY. Transaction ID:", pixPayment.data.transaction_id);
+
+    // Salva no SQLite
 /* Criar pagamento PIX (ANTI-FRAUDE: total calculado no backend) */
 app.post("/create-payment", async (req, res) => {
   const { nome, telefone, cpf, items } = req.body;
@@ -340,20 +682,39 @@ app.post("/create-payment", async (req, res) => {
       [
         nomeLimpo,
         phoneDigits,
+        order.total_cents / 100,
+        nomeLimpo,
+        phoneDigits,
         order.total_cents / 100, // valor em reais (só pra exibir)
         "AGUARDANDO",
         pixPayment.data.transaction_id,
+        pixPayment.data.transaction_id,
         JSON.stringify(items),
+        order.total_cents,
         order.total_cents,
       ],
       function (err) {
         if (err) {
+          console.error("❌ ERRO AO SALVAR NO DB:", err);
+          return res.status(500).json({ erro: "Erro ao salvar pedido no banco" });
           console.error("PAYMENT CREATION FAILED:", err);
           return res.status(500).json({ erro: "Erro ao salvar pedido" });
         }
 
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
         return res.json({
           pedido_id: this.lastID,
+          transacao_id: String(pixPayment.data.transaction_id),
+          total_cents: order.total_cents,
+          total_reais: (order.total_cents / 100).toFixed(2),
+          pix: {
+            qr_code: String(pixPayment.data.qr_code),
+            url: null,
+            expiration_date: expiresAt,
+            e2_e: String(pixPayment.data.transaction_id),
+            copy_paste_code: String(pixPayment.data.copy_paste_code),
+          },
           transacao_id: pixPayment.data.transaction_id,
           pix: {
             qr_code: pixPayment.data.qr_code,
@@ -363,19 +724,60 @@ app.post("/create-payment", async (req, res) => {
       }
     );
   } catch (error) {
-    console.error("PAYMENT CREATION FAILED:", error);
+    console.error("❌ EXCEPTION NO ROUTE HANDLER:", error);
     const statusCode = error?.statusCode || 500;
-    const errorMessage =
-      statusCode === 400 ? error.message : "Erro ao criar pagamento";
+    const errorMessage = statusCode === 400 ? error.message : "Erro interno ao processar pagamento";
     return res.status(statusCode).json({ erro: errorMessage });
   }
 });
 
+// --- SUBSTITUA O APP.POST INTEIRO POR ESTE ---
+app.post("/webhook/axenpay", (req, res) => {
+  try {
+    console.log("WEBHOOK RECEBIDO:", req.body);
 /* Webhook (AxenPay chama quando muda status) */
 app.post("/webhook/axenpay", (req, res) => {
   try {
     console.log("WEBHOOK RECEBIDO:", req.body);
 
+    const body = req.body || {};
+    
+    // 1. Identifica o ID
+    const transacaoId =
+      body.id || body.Id || body.transaction_id || body.transactionId || body.txid || body?.data?.id;
+
+    // 2. Identifica o Status
+    const rawStatus = body.status || body.Status || body?.data?.status;
+    const status = String(rawStatus || "").toUpperCase();
+
+    // 3. Identifica o Valor
+    const rawAmount = body.Amount || body.amount || body?.data?.amount || 0;
+    const valor = Number(rawAmount);
+
+    const paidStatuses = new Set(["PAID", "COMPLETED", "CONFIRMED", "SUCCESS"]);
+    
+    // LOGICA 1: Atualizar Banco de Dados (SÓ SE PAGOU)
+    if (paidStatuses.has(status) && transacaoId) {
+      db.run(
+        "UPDATE pedidos SET status = 'PAGO' WHERE transacao_id = ?",
+        [transacaoId],
+        (err) => {
+           if (!err) console.log("DB Atualizado para PAGO:", transacaoId);
+        }
+      );
+    }
+
+    // LOGICA 2: Avisar no Telegram (SE PAGOU OU SE GEROU)
+    // Se for PAGO ou PENDENTE, manda mensagem
+    if ((paidStatuses.has(status) || status === 'PENDING') && transacaoId) {
+        enviarNotificacaoTelegram(valor, status, transacaoId);
+    }
+
+    return res.sendStatus(200);
+  } catch (err) {
+    console.error("WEBHOOK ERROR:", err);
+    return res.sendStatus(200);
+  }
     const body = req.body || {};
     const transacaoId =
       body.id ||
@@ -405,6 +807,9 @@ app.post("/webhook/axenpay", (req, res) => {
       );
     }
 
+    return res.sendStatus(200);
+  try {
+    // ... código que estava aqui dentro ...
     return res.sendStatus(200);
   } catch (err) {
     console.error("WEBHOOK ERROR:", err);
@@ -478,6 +883,7 @@ app.get("/pedido/:id", (req, res) => {
 });
 
 /* Buscar pedido pelo ID grandão da AxenPay */
+/* Buscar pedido pelo ID grandão da AxenPay */
 app.get("/transacao/:id", (req, res) => {
   const { id } = req.params;
 
@@ -503,6 +909,12 @@ app.post("/ajuda", async (req, res) => {
 
     if (!pergunta) {
       return res.status(400).json({ error: "Pergunta não informada" });
+    }
+
+    if (!process.env.MISTRAL_API_KEY) {
+      return res.status(503).json({
+        error: "Serviço de ajuda indisponível no momento",
+      });
     }
 
     if (!process.env.MISTRAL_API_KEY) {
@@ -555,3 +967,46 @@ const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log("Servidor rodando na porta " + PORT);
 });
+
+// --- SUBSTITUA A FUNÇÃO ANTIGA POR ESTA NOVA ---
+async function enviarNotificacaoTelegram(valor, status, transacaoId) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+
+  if (!token || !chatId) return;
+
+  let valorFinal = valor;
+  if (valor > 0 && Number.isInteger(valor)) {
+      valorFinal = valor / 100;
+  }
+
+  // Define o título e a cor do emoji baseados no status
+  let titulo = "⚠️ ATUALIZAÇÃO DE STATUS";
+  let emoji = "🔔";
+
+  if (status === 'PENDING' || status === 'CRIADO') {
+      titulo = "🆕 PIX GERADO (AGUARDANDO)";
+      emoji = "⏳";
+  } else if (status === 'PAID' || status === 'APPROVED' || status === 'COMPLETED') {
+      titulo = "✅ PAGAMENTO CONFIRMADO!";
+      emoji = "💰";
+  }
+
+  const mensagem = `
+${emoji} *${titulo}*
+💵 Valor: R$ ${Number(valorFinal).toFixed(2)}
+🆔 ID: ${transacaoId}
+ℹ️ Status: ${status}
+  `;
+
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: mensagem, parse_mode: 'Markdown' })
+    });
+    console.log(`🔔 Notificação (${status}) enviada pro Telegram!`);
+  } catch (erro) {
+    console.error('Erro Telegram:', erro);
+  }
+}
