@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const crypto = require("crypto");
 const db = require("./database");
 
 const app = express();
@@ -14,25 +15,29 @@ const ALLOWED_ORIGINS = [
   "https://divinosabor.shop",
   "http://localhost:5173",
   "http://localhost:8080",
+  "http://localhost:8081",
 ];
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // permite requests sem origin (ex: curl, postman)
-      if (!origin) return callback(null, true);
+const corsOptions = {
+  origin: function (origin, callback) {
+    // permite requests sem origin (ex: curl, postman)
+    if (!origin) return callback(null, true);
 
-      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
 
-      return callback(new Error("Not allowed by CORS: " + origin));
-    },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+    return callback(new Error("Not allowed by CORS: " + origin));
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
 
-// responder preflight (OPTIONS) pra tudo
-app.options("*", cors());
+app.use(cors(corsOptions));
+app.options(/.*/, cors());
+
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
+
 
 // Catálogo completo (SKU = "productId:sizeId")
 const CATALOGO = {
@@ -126,6 +131,170 @@ function onlyDigits(s) {
   return String(s || "").replace(/\D+/g, "");
 }
 
+function buildOrderFromItems(items) {
+  let total_cents = 0;
+  const payloadItems = [];
+
+  for (const it of items) {
+    const sku = it?.sku;
+    const qty = Number(it?.qty);
+
+    if (!sku || !Number.isFinite(qty) || qty < 1) {
+      const err = new Error("Item inválido. Use { sku, qty>=1 }");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const produto = CATALOGO[sku];
+    if (!produto) {
+      const err = new Error(`SKU inválido: ${sku}`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    total_cents += produto.unit_price_cents * qty;
+    payloadItems.push({
+      title: produto.title,
+      unit_price: produto.unit_price_cents,
+      quantity: qty,
+      tangible: produto.tangible,
+    });
+  }
+
+  return { total_cents, payloadItems };
+}
+
+async function createPixPayment(items, customer) {
+  const bearerToken = process.env.AXENPAY_BEARER_TOKEN;
+  const AXENPAY_BASE_URL = process.env.AXENPAY_BASE_URL;
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL;
+
+  if (!bearerToken) {
+    const err = new Error("AxenPay bearer token not configured");
+    err.statusCode = 500;
+    throw err;
+  }
+  if (!AXENPAY_BASE_URL) {
+    const err = new Error("AxenPay base URL not configured");
+    err.statusCode = 500;
+    throw err;
+  }
+  if (!publicBaseUrl) {
+    const err = new Error("Public base URL not configured");
+    err.statusCode = 500;
+    throw err;
+  }
+
+  const { total_cents, payloadItems } = buildOrderFromItems(items);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const url = `${AXENPAY_BASE_URL}/api/payments/deposit`;
+    const externalId = crypto.randomUUID
+      ? `pedido_${crypto.randomUUID()}`
+      : `pedido_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${bearerToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        amount: Number((total_cents / 100).toFixed(2)),
+        external_id: externalId,
+        clientCallbackUrl: `${publicBaseUrl}/webhook/axenpay`,
+        payer: {
+          name: customer.nome,
+          email: customer.email || "cliente@teste.com",
+          document: customer.cpfDigits,
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    const rawText = await response.text();
+    let data = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch (e) {
+      data = null;
+    }
+
+    if (!response.ok) {
+      console.error("AXENPAY STATUS:", response.status);
+      console.error("AXENPAY BODY:", rawText);
+      const err = new Error(`AXENPAY ERROR ${response.status}`);
+      err.statusCode = response.status;
+      err.rawBody = rawText;
+      err.alreadyLogged = true;
+      throw err;
+    }
+
+    const transactionId =
+      data?.data?.id || data?.id || data?.transaction_id || data?.payment_id;
+    const pix = data?.data?.pix || data?.pix || data?.payment || {};
+    const qrCode =
+      pix.qr_code ||
+      pix.qrCode ||
+      pix.qr_code_base64 ||
+      pix.qr_code_image ||
+      data?.qr_code ||
+      data?.qrCode;
+    const copyPasteCode =
+      pix.copy_paste_code ||
+      pix.copyPasteCode ||
+      pix.emv ||
+      pix.br_code ||
+      pix.qr_code_text ||
+      data?.emv ||
+      data?.br_code;
+    const status = data?.data?.status || data?.status || pix.status;
+
+    if (!transactionId || !qrCode || !copyPasteCode) {
+      const err = new Error("AXENPAY ERROR 502");
+      err.statusCode = 502;
+      err.rawBody = rawText;
+      throw err;
+    }
+
+    return {
+      ok: true,
+      data: {
+        qr_code: qrCode,
+        copy_paste_code: copyPasteCode,
+        transaction_id: transactionId,
+        status: status || "PENDING",
+      },
+    };
+  } catch (error) {
+    const status = error?.statusCode || 500;
+    const body = error?.rawBody || error?.message || "UNKNOWN_ERROR";
+    if (!error?.alreadyLogged) {
+      console.error("AXENPAY STATUS:", status);
+      console.error("AXENPAY BODY:", body);
+    }
+    return {
+      ok: false,
+      error: {
+        message: error?.message || "AXENPAY ERROR",
+        status,
+      },
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// --- COLOQUE A ROTA DE PING AQUI, DO LADO DE FORA ---
+// Rota de "Health Check" para o Render não dormir
+app.get('/ping', (req, res) => {
+  console.log('Ping recebido! Servidor continua acordado.');
+  res.status(200).json({ status: 'ativo', message: 'Servidor rodando liso!' });
+});
+
+
 /* Criar pagamento PIX (ANTI-FRAUDE: total calculado no backend) */
 app.post("/create-payment", async (req, res) => {
   const { nome, telefone, cpf, items } = req.body;
@@ -137,177 +306,110 @@ app.post("/create-payment", async (req, res) => {
     });
   }
 
+  const nomeLimpo = String(nome).trim();
   const cpfDigits = onlyDigits(cpf);
-  const phone = String(telefone).trim();
+  const phoneDigits = onlyDigits(telefone);
+
+  if (nomeLimpo.length < 2) {
+    return res.status(400).json({ erro: "Nome inválido" });
+  }
 
   if (cpfDigits.length !== 11) {
     return res.status(400).json({ erro: "CPF inválido (precisa ter 11 dígitos)" });
   }
 
-  // Calcula total e monta items para AnubisPay
-  let total_cents = 0;
-
-  // items do front: [{ sku, qty }]
-  for (const it of items) {
-    const sku = it?.sku;
-    const qty = Number(it?.qty);
-
-    if (!sku || !Number.isFinite(qty) || qty < 1) {
-      return res.status(400).json({ erro: "Item inválido. Use { sku, qty>=1 }" });
-    }
-
-    const produto = CATALOGO[sku];
-    if (!produto) {
-      return res.status(400).json({ erro: `SKU inválido: ${sku}` });
-    }
-
-    total_cents += produto.unit_price_cents * qty;
+  if (phoneDigits.length < 10 || phoneDigits.length > 11) {
+    return res.status(400).json({ erro: "Telefone inválido" });
   }
 
-  // Se quiser impor mínimo (muitos gateways têm mínimo)
-  // Exemplo: mínimo R$ 10,00:
-  // if (total_cents < 1000) return res.status(400).json({ erro: "Pedido mínimo: R$ 10,00" });
-
-  const amount = total_cents; // centavos (inteiro)
-
-  // Basic Auth Base64: PUBLIC:SECRET
-  const auth = Buffer.from(
-    `${process.env.ANUBIS_PUBLIC_KEY}:${process.env.ANUBIS_SECRET_KEY}`
-  ).toString("base64");
-
   try {
-    const response = await fetch(
-      "https://api2.anubispay.com.br/v1/payment-transaction/create",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${auth}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          amount,
-          payment_method: "pix",
-          postback_url: `${process.env.PUBLIC_BASE_URL}/webhook/anubispay`,
-          customer: {
-            name: nome,
-            email: "cliente@teste.com", // MVP
-            phone,
-            document: {
-              type: "cpf",
-              number: cpfDigits,
-            },
-          },
-
-          // Items reais do pedido (preço vem do backend)
-          items: items.map((it) => {
-            const produto = CATALOGO[it.sku];
-            return {
-              title: produto.title,
-              unit_price: produto.unit_price_cents,
-              quantity: Number(it.qty),
-              tangible: produto.tangible,
-            };
-          }),
-
-          pix: { expires_in_days: 1 },
-          metadata: { provider_name: "checkout-marmita" },
-        }),
-      }
-    );
-
-    // ✅ Lê como texto primeiro (evita crash se vier vazio ou não-JSON)
-const rawText = await response.text();
-
-let data = null;
-try {
-  data = rawText ? JSON.parse(rawText) : null;
-} catch (e) {
-  data = null;
-}
-
-console.log("STATUS ANUBIS:", response.status);
-console.log("ANUBIS content-type:", response.headers.get("content-type"));
-console.log("ANUBIS raw body:", rawText);
-
-// ✅ Se não for OK, devolve erro com detalhes (não dá 500 sem explicação)
-if (!response.ok) {
-  return res.status(400).json({
-    erro: "Falha ao criar transação na AnubisPay",
-    status: response.status,
-    raw: rawText,
-    data,
-  });
-}
-
-    console.log("STATUS ANUBIS:", response.status);
-    console.log("RESPOSTA ANUBIS:", JSON.stringify(data, null, 2));
-
-    const transacaoId = data?.data?.id;
-
-    // Se a API respondeu erro de validação/autenticação, devolve detalhes
-    if (!response.ok || !transacaoId) {
-      return res.status(400).json({
-        erro: "Falha ao criar transação na AnubisPay",
-        detalhes: data,
-      });
+    const order = buildOrderFromItems(items);
+    const pixPayment = await createPixPayment(items, {
+      nome: nomeLimpo,
+      phone: phoneDigits,
+      cpfDigits,
+    });
+    
+    if (!pixPayment.ok) {
+      return res.status(400).json({ erro: "Erro ao criar pagamento" });
     }
 
     // Salva no SQLite (inclui items e total_cents)
     db.run(
       "INSERT INTO pedidos (nome, telefone, valor, status, transacao_id, items, total_cents) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
-        nome,
-        phone,
-        amount / 100, // valor em reais (só pra exibir)
+        nomeLimpo,
+        phoneDigits,
+        order.total_cents / 100, // valor em reais (só pra exibir)
         "AGUARDANDO",
-        transacaoId,
+        pixPayment.data.transaction_id,
         JSON.stringify(items),
-        amount,
+        order.total_cents,
       ],
       function (err) {
         if (err) {
-          console.error("Erro ao salvar pedido:", err);
+          console.error("PAYMENT CREATION FAILED:", err);
           return res.status(500).json({ erro: "Erro ao salvar pedido" });
         }
 
         return res.json({
           pedido_id: this.lastID,
-          transacao_id: transacaoId,
-          total_cents: amount,
-          total_reais: (amount / 100).toFixed(2),
-          pix: data?.data?.pix,
+          transacao_id: pixPayment.data.transaction_id,
+          pix: {
+            qr_code: pixPayment.data.qr_code,
+            copy_paste_code: pixPayment.data.copy_paste_code,
+          },
         });
       }
     );
   } catch (error) {
-    console.error("Erro ao criar pagamento:", error);
-    return res.status(500).json({ erro: "Erro ao criar pagamento" });
+    console.error("PAYMENT CREATION FAILED:", error);
+    const statusCode = error?.statusCode || 500;
+    const errorMessage =
+      statusCode === 400 ? error.message : "Erro ao criar pagamento";
+    return res.status(statusCode).json({ erro: errorMessage });
   }
 });
 
-/* Webhook (AnubisPay chama quando muda status) */
-app.post("/webhook/anubispay", (req, res) => {
-  console.log("WEBHOOK RECEBIDO:", req.body);
+/* Webhook (AxenPay chama quando muda status) */
+app.post("/webhook/axenpay", (req, res) => {
+  try {
+    console.log("WEBHOOK RECEBIDO:", req.body);
 
-  const transacaoId = req.body.Id || req.body.id;
-  const status = req.body.Status || req.body.status;
+    const body = req.body || {};
+    const transacaoId =
+      body.id ||
+      body.Id ||
+      body.transaction_id ||
+      body.transactionId ||
+      body.txid ||
+      body?.data?.id ||
+      body?.data?.transaction_id;
+    const rawStatus =
+      body.status || body.Status || body?.data?.status || body?.event?.status;
+    const status = String(rawStatus || "").toUpperCase();
 
-  if (status === "PAID" && transacaoId) {
-    db.run(
-      "UPDATE pedidos SET status = 'PAGO' WHERE transacao_id = ?",
-      [transacaoId],
-      function (err) {
-        if (err) {
-          console.error("Erro ao atualizar pedido:", err);
-        } else {
-          console.log("Pedido marcado como PAGO:", transacaoId);
+    const paidStatuses = new Set(["PAID", "COMPLETED", "CONFIRMED", "SUCCESS"]);
+
+    if (paidStatuses.has(status) && transacaoId) {
+      db.run(
+        "UPDATE pedidos SET status = 'PAGO' WHERE transacao_id = ?",
+        [transacaoId],
+        function (err) {
+          if (err) {
+            console.error("WEBHOOK ERROR:", err);
+          } else {
+            console.log("Pedido marcado como PAGO:", transacaoId);
+          }
         }
-      }
-    );
-  }
+      );
+    }
 
-  return res.sendStatus(200);
+    return res.sendStatus(200);
+  } catch (err) {
+    console.error("WEBHOOK ERROR:", err);
+    return res.sendStatus(200);
+  }
 });
 
 // ✅ SALVAR META DO PEDIDO (endereço, itens, etc)
@@ -375,7 +477,7 @@ app.get("/pedido/:id", (req, res) => {
   );
 });
 
-/* Buscar pedido pelo ID grandão da AnubisPay */
+/* Buscar pedido pelo ID grandão da AxenPay */
 app.get("/transacao/:id", (req, res) => {
   const { id } = req.params;
 
@@ -401,6 +503,12 @@ app.post("/ajuda", async (req, res) => {
 
     if (!pergunta) {
       return res.status(400).json({ error: "Pergunta não informada" });
+    }
+
+    if (!process.env.MISTRAL_API_KEY) {
+      return res.status(503).json({
+        error: "Serviço de ajuda indisponível no momento",
+      });
     }
 
     const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
