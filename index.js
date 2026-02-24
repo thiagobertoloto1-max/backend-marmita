@@ -2,7 +2,6 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
-const crypto = require("crypto");
 const db = require("./database");
 
 const app = express();
